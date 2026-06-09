@@ -22,7 +22,9 @@ class Config:
             "Rydberg atom",
             "magneto-optical trap",
             "optical tweezers",
-            "nanophotonics"
+            "nanophotonics",
+            "micro cavity",
+            "cavity QED"
         ]
         
     MAX_RESULTS = int(os.getenv("MAX_RESULTS", 50))
