@@ -31,5 +31,5 @@ jobs:
           # 如果你在 Variables 里没配，就会自动回退使用后面单引号里的默认值。
           FETCH_DAYS: ${{ vars.FETCH_DAYS || '2' }}
           MAX_RESULTS: ${{ vars.MAX_RESULTS || '20' }}
-          SEARCH_KEYWORDS: ${{ vars.SEARCH_KEYWORDS || 'tweezer array, integrated photonics, tweezer arrays, arno rauschenbeutel, integrated photonic, nanofiber, casimir polder, FPGA' }}
+          SEARCH_KEYWORDS: ${{ vars.SEARCH_KEYWORDS || 'tweezer array, integrated photonics, tweezer arrays, arno rauschenbeutel, integrated photonic, nanofiber, casimir polder, Lukin, cavity QED, atom chip, FPGA' }}
         run: python main.py
