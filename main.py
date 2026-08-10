@@ -17,6 +17,7 @@ from config import Config
 from arxiv_fetcher import ArxivFetcher
 from email_sender import EmailSender
 from llm_summarizer import LLMSummarizer
+from author_profiles import AuthorProfiles
 
 # 配置日志
 logging.basicConfig(
@@ -33,6 +34,7 @@ class ArxivDailyDigest:
         self.fetcher = ArxivFetcher()
         self.email_sender = EmailSender()
         self.summarizer = LLMSummarizer()
+        self.author_profiles = AuthorProfiles()
 
     def run(self, test_mode=False):
         """运行一次任务"""
@@ -97,6 +99,7 @@ class ArxivDailyDigest:
                 full_text = self.fetcher.get_paper_full_text(paper)
                 if full_text:
                     paper['full_text_read'] = True
+                    paper['full_text'] = full_text  # 供作者画像解析复用，避免重复下载 PDF
                     result = self.summarizer.summarize_paper(paper, full_text)
                     if result:
                         paper['ai_summary'] = result['summary']
@@ -109,6 +112,11 @@ class ArxivDailyDigest:
         papers.sort(key=lambda p: p.get('importance', 3), reverse=True)
         for paper in papers[:3]:
             paper['is_top'] = True
+
+        # 第三步补充：为 Top 3 论文生成作者代表作 + 第一单位
+        # 有 DeepSeek key 时解析完整作者角色；无 key 时降级为 arXiv 第一作者 + Semantic Scholar 代表作
+        for paper in papers[:3]:
+            paper['author_profiles'] = self.author_profiles.build_author_profiles(paper, paper.get('full_text'))
 
         # 第四步：组装邮件展示文本
         summaries = [self._build_paper_summary(p) for p in papers]

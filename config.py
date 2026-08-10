@@ -21,6 +21,12 @@ class Config:
     PDF_PAGES = int(os.getenv("PDF_PAGES", 6))
     # 未精读论文在邮件中展示的摘要长度上限
     MAX_ABSTRACT_CHARS = int(os.getenv("MAX_ABSTRACT_CHARS", 800))
+
+    # === 作者代表作（Semantic Scholar / arXiv）配置 ===
+    # Semantic Scholar API 请求超时（秒）
+    SEMANTIC_SCHOLAR_TIMEOUT = int(os.getenv("SEMANTIC_SCHOLAR_TIMEOUT", 10))
+    # 每篇论文最多查几个关键作者的代表作
+    MAX_AUTHOR_PROFILES = int(os.getenv("MAX_AUTHOR_PROFILES", 5))
     
     # === 时间限制变量 ===
     # 搜索时间范围，单位小时。默认取当前运行时间前 150 小时（约 6.25 天）。

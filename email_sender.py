@@ -192,6 +192,7 @@ class EmailSender:
         ]
         if paper.get('reason'):
             lines.append(f"💡 AI 相关度: {paper['reason']} (重要性 {paper.get('importance', '?')}/5)")
+        lines.extend(self._author_profile_text(paper))
         lines.append("")
         if paper.get('ai_summary'):
             lines.append("🤖 AI 中文总结:")
@@ -278,6 +279,32 @@ class EmailSender:
         """
         return html
 
+    def _author_profile_text(self, paper):
+        """纯文本版作者画像区块"""
+        ap = paper.get('author_profiles')
+        if not ap:
+            return []
+
+        def rep_line(name):
+            rep = (ap.get('representative_works') or {}).get(name)
+            if rep and rep.get('title'):
+                year = rep.get('year') or '?'
+                cite = f", 引用{rep['citation_count']}" if rep.get('citation_count') else ''
+                src = "SS" if rep.get('source') == 'semantic_scholar' else "arXiv"
+                return f"{name} -> {rep['title']} ({year}{cite}) [{src}]"
+            return f"{name} -> 未找到代表作"
+
+        lines = []
+        if ap.get('first_affiliation'):
+            lines.append(f"🏛️ 第一单位: {ap['first_affiliation']}")
+        if ap.get('first_author'):
+            lines.append(f"🧑‍🔬 第一作者: {rep_line(ap['first_author'])}")
+        for a in ap.get('co_first_authors', [])[:3]:
+            lines.append(f"🤝 共同一作: {rep_line(a)}")
+        for a in ap.get('corresponding', [])[:3]:
+            lines.append(f"📧 通讯作者: {rep_line(a)}")
+        return lines
+
     def _paper_html_block(self, paper, top=False):
         """生成单篇论文的HTML卡片"""
         cls = 'top-paper' if top else 'paper'
@@ -296,6 +323,7 @@ class EmailSender:
             block += f"""
                 <div class="reason">💡 <strong>AI 相关度:</strong> {paper['reason']} <span style="color:#e74c3c;">(重要性 {paper.get('importance', '?')}/5)</span></div>
             """
+        block += self._author_profile_html(paper)
         if paper.get('ai_summary'):
             block += f"""
                 <div class="ai-summary">
@@ -329,6 +357,40 @@ class EmailSender:
             </div>
         """
         return block
+
+    def _author_profile_html(self, paper):
+        """生成作者画像区块：第一单位 + 关键作者代表作"""
+        ap = paper.get('author_profiles')
+        if not ap:
+            return ''
+        rows = []
+
+        def rep_line(name):
+            rep = (ap.get('representative_works') or {}).get(name)
+            if rep and rep.get('title'):
+                year = rep.get('year') or '?'
+                cite = f", 引用{rep['citation_count']}" if rep.get('citation_count') else ''
+                src = "SS" if rep.get('source') == 'semantic_scholar' else "arXiv"
+                return f"{name} → <em>{rep['title']}</em> ({year}{cite}) <span style='color:#95a5a6'>[{src}]</span>"
+            return f"{name} → <span style='color:#95a5a6'>未找到代表作</span>"
+
+        if ap.get('first_affiliation'):
+            rows.append(f"🏛️ <strong>第一单位:</strong> {ap['first_affiliation']}")
+        if ap.get('first_author'):
+            rows.append("🧑‍🔬 <strong>第一作者:</strong> " + rep_line(ap['first_author']))
+        for a in ap.get('co_first_authors', [])[:3]:
+            rows.append("🤝 <strong>共同一作:</strong> " + rep_line(a))
+        for a in ap.get('corresponding', [])[:3]:
+            rows.append("📧 <strong>通讯作者:</strong> " + rep_line(a))
+        if not rows:
+            return ''
+
+        body = "<br>".join(rows)
+        return f"""
+            <div style="background:#f3f6fa; padding:10px; border-radius:3px; margin:8px 0; font-size:14px; line-height:1.7;">
+                {body}
+            </div>
+        """
 
     def _send_email(self, msg):
         """修复：忽略SSL关闭错误，正确返回发送成功"""
