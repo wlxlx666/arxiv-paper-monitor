@@ -22,9 +22,16 @@ class Config:
     # 未精读论文在邮件中展示的摘要长度上限
     MAX_ABSTRACT_CHARS = int(os.getenv("MAX_ABSTRACT_CHARS", 800))
     
-    # === 新增：时间限制变量 ===
-    # 优先从环境变量读取，默认为 1 天。如果设为 0 则表示无时间限制。
-    FETCH_DAYS = int(os.getenv("FETCH_DAYS", 1))
+    # === 时间限制变量 ===
+    # 搜索时间范围，单位小时。默认取当前运行时间前 28 小时。
+    # 未设置 FETCH_HOURS 时回退到旧的 FETCH_DAYS（天）配置，两者都未设置则默认 28 小时。
+    _fetch_hours = os.getenv("FETCH_HOURS")
+    if _fetch_hours:
+        FETCH_HOURS = int(_fetch_hours)
+    elif os.getenv("FETCH_DAYS"):
+        FETCH_HOURS = int(os.getenv("FETCH_DAYS")) * 24
+    else:
+        FETCH_HOURS = 28
     
     # Arxiv配置
     _env_keywords = os.getenv("SEARCH_KEYWORDS")

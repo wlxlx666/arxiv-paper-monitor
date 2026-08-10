@@ -12,17 +12,23 @@ class ArxivFetcher:
         self.client = arxiv.Client()
         self.keywords = Config.SEARCH_KEYWORDS
         
-    def fetch_recent_papers(self, days_back: int = 1, max_results: int = 50) -> List[Dict]:
+    def fetch_recent_papers(self, days_back: int = 1, max_results: int = 50, hours_back: int = None) -> List[Dict]:
         """获取符合关键词的论文"""
         try:
             from datetime import timedelta # 确保导入了 timedelta
-            
+
             # 1. 基础关键词查询
             keyword_query = " OR ".join([f'all:"{kw.strip()}"' for kw in self.keywords])
             query = f"({keyword_query})"
-            
-            # === 新增：动态时间限制逻辑 ===
-            if days_back > 0:
+
+            # === 时间限制逻辑：默认用小时，回退到天 ===
+            if hours_back is not None:
+                end_date = datetime.now()
+                start_date = end_date - timedelta(hours=hours_back)
+                date_range = f"[{start_date.strftime('%Y%m%d')} TO {end_date.strftime('%Y%m%d')}]"
+                query += f" AND submittedDate:{date_range}"
+                logger.info(f"搜索时间范围: 当前时间前 {hours_back} 小时")
+            elif days_back > 0:
                 end_date = datetime.now()
                 start_date = end_date - timedelta(days=days_back)
                 date_range = f"[{start_date.strftime('%Y%m%d')} TO {end_date.strftime('%Y%m%d')}]"

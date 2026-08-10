@@ -42,9 +42,10 @@ class ArxivDailyDigest:
 
         try:
             # 1. 获取论文
-            # === 修改：读取并传入 days_back ===
-            days_back = 0 if test_mode else Config.FETCH_DAYS
-            papers = self.fetcher.fetch_recent_papers(days_back=days_back)
+            # === 修改：按小时窗口抓取（默认当前时间前 28 小时） ===
+            days_back = 0 if test_mode else None
+            hours_back = None if test_mode else getattr(Config, 'FETCH_HOURS', 28)
+            papers = self.fetcher.fetch_recent_papers(days_back=days_back, hours_back=hours_back)
 
             # 2. 生成摘要
             summaries = []
