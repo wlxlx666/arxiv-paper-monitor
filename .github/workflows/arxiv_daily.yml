@@ -27,9 +27,14 @@ jobs:
           EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
 
+          # AI 精读：在 Secrets 里添加 DEEPSEEK_API_KEY 即可启用
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+
           # 搜索控制：优先从 GitHub Variables 读取你设置的值。
           # 如果你在 Variables 里没配，就会自动回退使用后面单引号里的默认值。
           FETCH_DAYS: ${{ vars.FETCH_DAYS || '2' }}
           MAX_RESULTS: ${{ vars.MAX_RESULTS || '20' }}
           SEARCH_KEYWORDS: ${{ vars.SEARCH_KEYWORDS || 'tweezer array, integrated photonics, tweezer arrays, arno rauschenbeutel, integrated photonic, nanofiber, casimir polder, Lukin, cavity QED, atom chip, FPGA' }}
+          # 每天 AI 挑选重要性最高的前 N 篇论文下载全文精读
+          PDF_READ_COUNT: ${{ vars.PDF_READ_COUNT || '5' }}
         run: python main.py

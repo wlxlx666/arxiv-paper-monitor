@@ -1,12 +1,22 @@
 # main.py - 适配GitHub Actions的版本
+import sys
 import time
 import os
 from datetime import datetime
 import logging
 
+# Windows 控制台默认 GBK，会因 emoji 打印崩溃；统一改用 UTF-8 输出
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 from config import Config
 from arxiv_fetcher import ArxivFetcher
 from email_sender import EmailSender
+from llm_summarizer import LLMSummarizer
 
 # 配置日志
 logging.basicConfig(
@@ -22,29 +32,31 @@ class ArxivDailyDigest:
     def __init__(self):
         self.fetcher = ArxivFetcher()
         self.email_sender = EmailSender()
-        
+        self.summarizer = LLMSummarizer()
+
     def run(self, test_mode=False):
         """运行一次任务"""
         logger.info("=" * 60)
         logger.info(f"开始执行Arxiv论文抓取任务 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
+        logger.info(f"AI精读引擎: {'已启用(DeepSeek)' if self.summarizer.enabled else '未启用(将直接展示原始摘要)'}")
+
         try:
             # 1. 获取论文
             # === 修改：读取并传入 days_back ===
             days_back = 0 if test_mode else Config.FETCH_DAYS
             papers = self.fetcher.fetch_recent_papers(days_back=days_back)
-            
+
             # 2. 生成摘要
             summaries = []
             if papers:
-                summaries = [self.fetcher.generate_summary(paper) for paper in papers]
+                papers, summaries = self._enrich_papers(papers)
                 logger.info(f"找到 {len(papers)} 篇相关论文")
             else:
                 logger.info("今日没有找到相关论文，将发送『无新论文』通知")
-            
+
             # 3. 总是发送邮件（无论有无论文）
             success = self.email_sender.send_digest(papers, summaries)
-            
+
             if success:
                 if papers:
                     logger.info(f"✅ 任务完成！成功发送 {len(papers)} 篇论文摘要")
@@ -52,12 +64,102 @@ class ArxivDailyDigest:
                     logger.info("✅ 任务完成！已发送『今日无新论文』通知")
             else:
                 logger.error("邮件发送失败")
-                
+
         except Exception as e:
             logger.exception(f"任务执行失败: {e}")
-        
+
         logger.info("=" * 60)
-    
+
+    def _enrich_papers(self, papers: list):
+        """AI 打分 → 挑 Top N 精读全文 → 拼装每篇摘要"""
+        # 第一步：AI 批量打分（读摘要），得到 importance 和 reason
+        scores = self.summarizer.score_papers(papers)
+        for i, paper in enumerate(papers):
+            s = scores.get(i, {})
+            paper['importance'] = s.get('importance', 3)
+            paper['reason'] = s.get('reason', '')
+            paper['ai_summary'] = None
+            paper['highlights'] = []
+            paper['is_top'] = False
+            paper['full_text_read'] = False
+
+        if self.summarizer.enabled and scores:
+            # 第二步：按 importance 选出精读名单
+            pdf_read_count = getattr(Config, 'PDF_READ_COUNT', 5)
+            deep_read_indexes = self.summarizer.select_top_for_deep_read(scores, pdf_read_count)
+            logger.info(f"AI 挑选 {len(deep_read_indexes)} 篇论文下载全文精读")
+
+            for idx in deep_read_indexes:
+                if idx >= len(papers):
+                    continue
+                paper = papers[idx]
+                full_text = self.fetcher.get_paper_full_text(paper)
+                if full_text:
+                    paper['full_text_read'] = True
+                    result = self.summarizer.summarize_paper(paper, full_text)
+                    if result:
+                        paper['ai_summary'] = result['summary']
+                        paper['highlights'] = result['highlights']
+                        paper['importance'] = max(paper['importance'], 4)
+                else:
+                    logger.info(f"PDF 获取失败，降级为摘要总结: {paper['title'][:50]}")
+
+        # 第三步：按 importance 排序，标记 Top 3 为今日最值得读
+        papers.sort(key=lambda p: p.get('importance', 3), reverse=True)
+        for paper in papers[:3]:
+            paper['is_top'] = True
+
+        # 第四步：组装邮件展示文本
+        summaries = [self._build_paper_summary(p) for p in papers]
+        return papers, summaries
+
+    def _build_paper_summary(self, paper: dict) -> str:
+        """生成单篇论文在邮件中的展示文本"""
+        lines = [
+            "=" * 60,
+            f"📄 标题: {paper['title']}",
+            "",
+            f"👥 作者: {', '.join(paper['authors'][:3])}{' 等' if len(paper['authors']) > 3 else ''}",
+            f"📅 发布时间: {paper['published']}",
+            f"📚 分类: {paper['primary_category']}",
+            f"🏷️ 命中关键词: {', '.join(paper.get('matched_keywords', ['未知']))}",
+        ]
+        if paper.get('reason'):
+            lines.append(f"💡 AI 相关度: {paper['reason']} (重要性 {paper.get('importance', '?')}/5)")
+        lines.append("")
+        if paper.get('ai_summary'):
+            lines.append("🤖 AI 中文总结:")
+            lines.append(paper['ai_summary'])
+            if paper.get('highlights'):
+                lines.append("")
+                lines.append("✨ 亮点:")
+                for h in paper['highlights']:
+                    lines.append(f"  • {h}")
+        else:
+            lines.append("📝 摘要:")
+            lines.append(self._truncate_text(paper['abstract'], getattr(Config, 'MAX_ABSTRACT_CHARS', 800)))
+            if paper.get('full_text_read'):
+                lines.append("")
+                lines.append("⚠️ AI 总结失败，以上为原文摘要")
+        lines.append("")
+        lines.append("🔗 链接:")
+        lines.append(f"PDF: {paper['pdf_url']}")
+        lines.append(f"Arxiv: {paper['arxiv_url']}")
+        lines.append("=" * 60)
+        lines.append("")
+        return "\n".join(lines)
+
+    def _truncate_text(self, text: str, max_length: int) -> str:
+        """截断过长的文本，尽量在单词边界处截断"""
+        text = text.replace('\n', ' ')
+        if len(text) <= max_length:
+            return text
+        truncated = text[:max_length]
+        last_space = truncated.rfind(' ')
+        if last_space > 0:
+            return truncated[:last_space]
+        return truncated
+
     def run_once(self, test_mode=False):
         """
         单次运行模式 - 用于GitHub Actions
@@ -76,10 +178,10 @@ def main():
         logger.error(f"配置错误: {e}")
         logger.info("请检查环境变量是否配置正确")
         return
-    
+
     # 创建实例
     digest = ArxivDailyDigest()
-    
+
     # 判断运行模式
     # 如果在GitHub Actions中，使用单次运行模式
     # 可以通过环境变量 RUN_IN_CI 或直接判断 GITHUB_ACTIONS 环境变量

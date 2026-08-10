@@ -1,4 +1,5 @@
 import arxiv
+import requests
 from datetime import datetime
 from typing import List, Dict
 import logging
@@ -80,6 +81,44 @@ class ArxivFetcher:
             logger.error(f"获取论文失败: {e}", exc_info=True) # exc_info=True 有助于打印完整的错误堆栈
             return []
     
+    def download_pdf(self, paper: Dict) -> bytes:
+        """下载论文 PDF 文件，失败返回 None"""
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"}
+            resp = requests.get(paper['pdf_url'], headers=headers, timeout=60)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                return resp.content
+            logger.warning(f"PDF 下载异常: {paper['pdf_url']} -> HTTP {resp.status_code}")
+            return None
+        except Exception as e:
+            logger.warning(f"PDF 下载失败 {paper['pdf_url']}: {e}")
+            return None
+
+    def extract_text(self, pdf_bytes: bytes) -> str:
+        """用 PyMuPDF 提取 PDF 前几页文本，失败返回 None"""
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            max_pages = getattr(Config, 'PDF_PAGES', 6)
+            text = []
+            for page in doc:
+                if len(text) >= max_pages:
+                    break
+                text.append(page.get_text())
+            doc.close()
+            full = "\n".join(text).strip()
+            return full if len(full) > 100 else None
+        except Exception as e:
+            logger.warning(f"PDF 文本提取失败: {e}")
+            return None
+
+    def get_paper_full_text(self, paper: Dict) -> str:
+        """下载并提取 PDF 全文文本，任一步失败返回 None"""
+        pdf_bytes = self.download_pdf(paper)
+        if pdf_bytes is None:
+            return None
+        return self.extract_text(pdf_bytes)
+
     def generate_summary(self, paper: Dict) -> str:
         """生成论文的简要摘要"""
         title = paper['title']
