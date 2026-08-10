@@ -27,6 +27,12 @@ class Config:
     SEMANTIC_SCHOLAR_TIMEOUT = int(os.getenv("SEMANTIC_SCHOLAR_TIMEOUT", 10))
     # 每篇论文最多查几个关键作者的代表作
     MAX_AUTHOR_PROFILES = int(os.getenv("MAX_AUTHOR_PROFILES", 5))
+
+    # === 图1提取配置 ===
+    # 是否从 PDF 提取图1内嵌到邮件（Top 3 论文）
+    EXTRACT_FIGURE1 = os.getenv("EXTRACT_FIGURE1", "true").lower() in ("1", "true", "yes")
+    # 图1压缩后的最大宽度（像素）
+    FIGURE_MAX_WIDTH = int(os.getenv("FIGURE_MAX_WIDTH", 800))
     
     # === 时间限制变量 ===
     # 搜索时间范围，单位小时。默认取当前运行时间前 26 小时。

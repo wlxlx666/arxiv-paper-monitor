@@ -117,6 +117,8 @@ class ArxivDailyDigest:
         # 有 DeepSeek key 时解析完整作者角色；无 key 时降级为 arXiv 第一作者 + Semantic Scholar 代表作
         for paper in papers[:3]:
             paper['author_profiles'] = self.author_profiles.build_author_profiles(paper, paper.get('full_text'))
+            # 提取图 1（失败则 paper['figure1']=None，邮件不显示）
+            paper['figure1'] = self.fetcher.extract_figure1(paper)
 
         # 第四步：组装邮件展示文本
         summaries = [self._build_paper_summary(p) for p in papers]

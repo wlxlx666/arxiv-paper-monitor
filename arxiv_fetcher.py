@@ -1,5 +1,6 @@
 import arxiv
 import requests
+import re
 from datetime import datetime
 from typing import List, Dict
 import logging
@@ -124,6 +125,99 @@ class ArxivFetcher:
         if pdf_bytes is None:
             return None
         return self.extract_text(pdf_bytes)
+
+    def extract_figure1(self, paper: Dict) -> Dict:
+        """提取论文图 1：定位 Fig.1 标题所在页，优先取嵌入图，无则页面截图。
+        返回 {content: PNG bytes, caption: 图题文本}，失败返回 None"""
+        if not getattr(Config, 'EXTRACT_FIGURE1', True):
+            return None
+        try:
+            import io
+            import fitz  # PyMuPDF
+            pdf_bytes = self.download_pdf(paper)
+            if pdf_bytes is None:
+                return None
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            fig_pat = re.compile(r'(?i)fig(?:ure)?\.?\s*1\s*[\.:\-]')
+
+            for pno in range(doc.page_count):
+                page = doc[pno]
+                text = page.get_text('text')
+                m = fig_pat.search(text)
+                if not m:
+                    continue
+                # 提取图题：从 Fig.1 标题行起，到下一个 Figure 标题或页末
+                caption = self._extract_caption(text, m.end())
+                content = None
+                # 优先：该页第一张嵌入图
+                imgs = page.get_images(full=True)
+                if imgs:
+                    xref = imgs[0][0]
+                    info = doc.extract_image(xref)
+                    content = info['image']
+                    content = self._to_png(content, info['ext'])
+                if content is None:
+                    # 兜底：截图页面 caption 上方区域（覆盖矢量图）
+                    rl = page.search_for(m.group(0))
+                    cap_y = rl[0].y0 if rl else page.rect.height
+                    clip = fitz.Rect(0, 0, page.rect.width, max(cap_y - 10, 10))
+                    pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=clip)
+                    content = pix.tobytes("png")
+                content = self._compress_image(content)
+                if content:
+                    doc.close()
+                    return {'content': content, 'caption': caption}
+            doc.close()
+            return None
+        except Exception as e:
+            logger.warning(f"图1提取失败 {paper.get('pdf_url', '')}: {e}")
+            return None
+
+    def _extract_caption(self, text: str, start: int) -> str:
+        """从 Fig.1 标题后截取图题文本（到下一个 Figure 标题或换行段落）"""
+        rest = text[start:]
+        # 截到下一个 Figure/Fig 标题（若存在）
+        m = re.search(r'(?i)fig(?:ure)?\.?\s*\d+', rest)
+        if m:
+            rest = rest[:m.start()]
+        lines = [ln.strip() for ln in rest.split('\n') if ln.strip()]
+        cap = ' '.join(lines)[:300].strip()
+        return cap
+
+    def _to_png(self, content: bytes, ext: str) -> bytes:
+        """把图片统一转为 PNG（若已是 PNG 直接返回）"""
+        try:
+            from PIL import Image
+            import io
+            if ext.lower() == 'png':
+                return content
+            img = Image.open(io.BytesIO(content))
+            buf = io.BytesIO()
+            img.convert('RGB').save(buf, format='PNG')
+            return buf.getvalue()
+        except Exception:
+            return None
+
+    def _compress_image(self, content: bytes) -> bytes:
+        """用 PIL 压缩图片：宽度不超过 FIGURE_MAX_WIDTH，体积尽量 < 400KB"""
+        try:
+            from PIL import Image
+            import io
+            max_w = getattr(Config, 'FIGURE_MAX_WIDTH', 800)
+            img = Image.open(io.BytesIO(content))
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            if img.width > max_w:
+                ratio = max_w / img.width
+                img = img.resize((max_w, int(img.height * ratio)), Image.LANCZOS)
+            buf = io.BytesIO()
+            quality = 82
+            img.save(buf, format='JPEG', quality=quality)
+            if buf.tell() > 400 * 1024:
+                img.save(buf := io.BytesIO(), format='JPEG', quality=60)
+            return buf.getvalue()
+        except Exception:
+            return content
 
     def generate_summary(self, paper: Dict) -> str:
         """生成论文的简要摘要"""

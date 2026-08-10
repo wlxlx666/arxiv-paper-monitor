@@ -1,7 +1,9 @@
 import smtplib
+import base64
 from datetime import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 import logging
 from config import Config
 
@@ -31,26 +33,30 @@ class EmailSender:
                 text_content = self._build_no_papers_text()
                 log_msg = "发送『今日无新论文』通知"
 
-            # 本地测试模式：不真正发信，打印内容到控制台
+            # 本地测试模式：不真正发信，打印内容到控制台（图片以 data URI 内嵌）
             if not getattr(Config, 'SEND_EMAIL', True):
+                html_preview = self._embed_images_data_uri(html_content, papers)
                 print("\n" + "=" * 20 + " 邮件主题 " + "=" * 20)
                 print(subject)
                 print("=" * 20 + " 纯文本版本 " + "=" * 20)
                 print(text_content)
                 print("=" * 20 + " HTML 版本 " + "=" * 20)
-                print(html_content)
+                print(html_preview)
                 print("=" * 56 + "\n")
                 logger.info(f"[本地测试] 已打印邮件内容（SEND_EMAIL=false），不实际发送 → {self.recipient}")
                 return True
 
-            # 创建邮件
-            msg = MIMEMultipart('alternative')
+            # 创建邮件：related 容器承载 HTML + 内嵌图片
+            msg = MIMEMultipart('related')
             msg['Subject'] = subject
             msg['From'] = self.sender
             msg['To'] = self.recipient
 
             msg.attach(MIMEText(text_content, 'plain', 'utf-8'))
             msg.attach(MIMEText(html_content, 'html', 'utf-8'))
+
+            # 把图1作为 inline 附件挂到邮件
+            self._attach_figure1_images(msg, papers)
 
             # 发送邮件
             self._send_email(msg)
@@ -209,6 +215,10 @@ class EmailSender:
                 lines.append("")
                 lines.append("⚠️ AI 总结失败，以上为原文摘要")
         lines.append("")
+        if paper.get('figure1'):
+            lines.append("📷 图1: 见邮件内嵌图")
+            if paper['figure1'].get('caption'):
+                lines.append(f"   图题: {paper['figure1']['caption']}")
         lines.append(f"🔗 PDF: {paper['pdf_url']}")
         lines.append(f"🔗 Arxiv: {paper['arxiv_url']}")
         lines.append("-" * 40)
@@ -324,6 +334,7 @@ class EmailSender:
                 <div class="reason">💡 <strong>AI 相关度:</strong> {paper['reason']} <span style="color:#e74c3c;">(重要性 {paper.get('importance', '?')}/5)</span></div>
             """
         block += self._author_profile_html(paper)
+        block += self._figure1_html(paper, top)
         if paper.get('ai_summary'):
             block += f"""
                 <div class="ai-summary">
@@ -357,6 +368,46 @@ class EmailSender:
             </div>
         """
         return block
+
+    def _figure1_html(self, paper, top=False):
+        """生成图1的HTML：真实发送用 cid 引用，本地预览用 data URI"""
+        fig = paper.get('figure1')
+        if not fig or not fig.get('content'):
+            return ''
+        pid = paper.get('id', '0')
+        caption = fig.get('caption', '')
+        cap_html = f"<div style='color:#7f8c8d;font-size:12px;margin-top:4px;'><strong>图1:</strong> {caption}</div>" if caption else ""
+        return f"""
+            <div style="margin:10px 0; text-align:center;">
+                <img src="cid:fig1_{pid}" style="max-width:100%; border:1px solid #eee; border-radius:3px;" alt="图1">
+                {cap_html}
+            </div>
+        """
+
+    def _attach_figure1_images(self, msg, papers):
+        """把各论文图1作为 inline 附件挂到邮件，供 cid 引用"""
+        for paper in papers:
+            fig = paper.get('figure1')
+            if not fig or not fig.get('content'):
+                continue
+            try:
+                img = MIMEImage(fig['content'])
+                img.add_header('Content-ID', f'<fig1_{paper.get("id", "0")}>')
+                img.add_header('Content-Disposition', 'inline', filename=f'fig1_{paper.get("id", "0")}.jpg')
+                msg.attach(img)
+            except Exception as e:
+                logger.warning(f"图1附件挂载失败: {e}")
+
+    def _embed_images_data_uri(self, html, papers):
+        """本地预览模式：把 cid 引用替换为 base64 data URI，使 HTML 可独立显示"""
+        for paper in papers:
+            fig = paper.get('figure1')
+            if not fig or not fig.get('content'):
+                continue
+            pid = paper.get('id', '0')
+            b64 = base64.b64encode(fig['content']).decode('ascii')
+            html = html.replace(f'src="cid:fig1_{pid}"', f'src="data:image/jpeg;base64,{b64}"')
+        return html
 
     def _author_profile_html(self, paper):
         """生成作者画像区块：第一单位 + 关键作者代表作"""
