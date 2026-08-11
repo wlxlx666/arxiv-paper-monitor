@@ -32,7 +32,7 @@ jobs:
 
           # 搜索控制：优先从 GitHub Variables 读取你设置的值。
           # 如果你在 Variables 里没配，就会自动回退使用后面单引号里的默认值。
-          FETCH_HOURS: ${{ vars.FETCH_HOURS || '28' }}
+          FETCH_HOURS: ${{ vars.FETCH_HOURS || '48' }}
           MAX_RESULTS: ${{ vars.MAX_RESULTS || '20' }}
           SEARCH_KEYWORDS: ${{ vars.SEARCH_KEYWORDS || 'tweezer array, integrated photonics, tweezer arrays, arno rauschenbeutel, integrated photonic, nanofiber, casimir polder, Lukin, cavity QED, atom chip, FPGA' }}
           # 每天 AI 挑选重要性最高的前 N 篇论文下载全文精读
