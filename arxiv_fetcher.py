@@ -149,13 +149,26 @@ class ArxivFetcher:
                 # 提取图题：从 Fig.1 标题行起，到下一个 Figure 标题或页末
                 caption = self._extract_caption(text, m.end())
                 content = None
-                # 优先：该页第一张嵌入图
+                # 优先：取该页面积最大的嵌入图（图1主体通常面积最大，
+                # 而不是第一张——第一张可能是装饰条/子面板）
                 imgs = page.get_images(full=True)
                 if imgs:
-                    xref = imgs[0][0]
-                    info = doc.extract_image(xref)
-                    content = info['image']
-                    content = self._to_png(content, info['ext'])
+                    best = None
+                    best_area = 0
+                    for img in imgs:
+                        try:
+                            w = img[2]
+                            h = img[3]
+                            area = w * h
+                            if area > best_area:
+                                best_area = area
+                                best = img
+                        except (IndexError, TypeError):
+                            continue
+                    if best is not None:
+                        info = doc.extract_image(best[0])
+                        content = self._to_png(info['image'], info['ext'])
+                        content = self._sanity_check_figure(content)
                 if content is None:
                     # 兜底：截图页面 caption 上方区域（覆盖矢量图）
                     rl = page.search_for(m.group(0))
@@ -171,6 +184,23 @@ class ArxivFetcher:
             return None
         except Exception as e:
             logger.warning(f"图1提取失败 {paper.get('pdf_url', '')}: {e}")
+            return None
+
+    def _sanity_check_figure(self, content) -> bytes:
+        """合理性检查：如果嵌入图太扁或太小（不像图1主体），返回 None 触发截图兜底"""
+        try:
+            from PIL import Image
+            import io
+            img = Image.open(io.BytesIO(content))
+            w, h = img.size
+            # 太扁（宽高比 > 4:1）或面积太小（< 40000 px²）判为可疑
+            if w == 0 or h == 0:
+                return None
+            aspect = w / h
+            if aspect > 4.0 or (w * h) < 40000:
+                return None
+            return content
+        except Exception:
             return None
 
     def _extract_caption(self, text: str, start: int) -> str:
