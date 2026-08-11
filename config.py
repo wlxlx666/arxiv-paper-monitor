@@ -35,15 +35,15 @@ class Config:
     FIGURE_MAX_WIDTH = int(os.getenv("FIGURE_MAX_WIDTH", 800))
     
     # === 时间限制变量 ===
-    # 搜索时间范围，单位小时。默认取当前运行时间前 150 小时。
-    # 未设置 FETCH_HOURS 时回退到旧的 FETCH_DAYS（天）配置，两者都未设置则默认 150 小时。
+    # 搜索时间范围，单位小时。默认取当前运行时间前 180 小时。
+    # 未设置 FETCH_HOURS 时回退到旧的 FETCH_DAYS（天）配置，两者都未设置则默认 180 小时。
     _fetch_hours = os.getenv("FETCH_HOURS")
     if _fetch_hours:
         FETCH_HOURS = int(_fetch_hours)
     elif os.getenv("FETCH_DAYS"):
         FETCH_HOURS = int(os.getenv("FETCH_DAYS")) * 24
     else:
-        FETCH_HOURS = 150
+        FETCH_HOURS = 180
     
     # Arxiv配置
     _env_keywords = os.getenv("SEARCH_KEYWORDS")
