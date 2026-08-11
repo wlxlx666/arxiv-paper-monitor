@@ -140,18 +140,21 @@ class ArxivFetcher:
             if pdf_bytes is None:
                 return None
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-            fig_pat = re.compile(r'(?i)fig(?:ure)?\.?\s*1\s*[\.:\-]')
+            # 匹配 "Fig. 1"、"Figure 1"、"Fig.1a"（子面板）等；"1" 后不能跟数字（排除 Fig. 10/11）
+            fig_pat = re.compile(r'(?i)fig(?:ure)?\.?\s*1(?![0-9])')
 
+            # 第一遍：找"有嵌入图 + 有 Fig.1 引用"的页（图1实际所在页），优先提取
             for pno in range(doc.page_count):
                 page = doc[pno]
                 text = page.get_text('text')
                 m = fig_pat.search(text)
                 if not m:
                     continue
-                caption = self._extract_caption(text, m.end())
+                imgs = page.get_images(full=True)
+                if not imgs:
+                    continue  # 无嵌入图 → 很可能是正文引用页，跳过
                 rl = page.search_for(m.group(0))
                 cap_y = rl[0].y0 if rl else page.rect.height
-
                 content = None
                 # 方案一：嵌入图显示矩形并集圈定图1实际区域（完整多面板，避开正文）
                 rects_union = self._figure_region(page, cap_y)
@@ -159,33 +162,45 @@ class ArxivFetcher:
                     pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=rects_union)
                     content = self._sanity_check_figure(pix.tobytes("png"))
                 if content is None:
-                    # 方案二：截图 caption 上方整块区域（覆盖矢量图等）
-                    clip_h = max(cap_y - 10, 10)
-                    if clip_h > 0.15 * page.rect.height:
-                        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=fitz.Rect(0, 0, page.rect.width, clip_h))
-                        content = self._sanity_check_figure(pix.tobytes("png"))
-                if content is None:
-                    # 方案三：取该页面积最大的嵌入图
-                    imgs = page.get_images(full=True)
-                    if imgs:
-                        best = None
-                        best_area = 0
-                        for img in imgs:
-                            try:
-                                area = img[2] * img[3]
-                                if area > best_area:
-                                    best_area = area
-                                    best = img
-                            except (IndexError, TypeError):
-                                continue
-                        if best is not None:
-                            info = doc.extract_image(best[0])
-                            content = self._to_png(info['image'], info['ext'])
-                            content = self._sanity_check_figure(content)
+                    # 方案二：取该页面积最大的嵌入图
+                    best = None
+                    best_area = 0
+                    for img in imgs:
+                        try:
+                            area = img[2] * img[3]
+                            if area > best_area:
+                                best_area = area
+                                best = img
+                        except (IndexError, TypeError):
+                            continue
+                    if best is not None:
+                        info = doc.extract_image(best[0])
+                        content = self._to_png(info['image'], info['ext'])
+                        content = self._sanity_check_figure(content)
                 content = self._compress_image(content)
                 if content:
+                    caption = self._extract_caption(text, m.end())
                     doc.close()
                     return {'content': content, 'caption': caption}
+
+            # 第二遍：全文都无嵌入图（纯矢量图论文），回退到截图方案
+            for pno in range(doc.page_count):
+                page = doc[pno]
+                text = page.get_text('text')
+                m = fig_pat.search(text)
+                if not m:
+                    continue
+                rl = page.search_for(m.group(0))
+                cap_y = rl[0].y0 if rl else page.rect.height
+                clip_h = max(cap_y - 10, 10)
+                if clip_h > 0.15 * page.rect.height:
+                    pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=fitz.Rect(0, 0, page.rect.width, clip_h))
+                    content = self._sanity_check_figure(pix.tobytes("png"))
+                    content = self._compress_image(content)
+                    if content:
+                        caption = self._extract_caption(text, m.end())
+                        doc.close()
+                        return {'content': content, 'caption': caption}
             doc.close()
             return None
         except Exception as e:
@@ -243,6 +258,8 @@ class ArxivFetcher:
     def _extract_caption(self, text: str, start: int) -> str:
         """从 Fig.1 标题后截取图题文本（到下一个 Figure 标题或换行段落）"""
         rest = text[start:]
+        # 去掉开头的标点/冒号等（正则匹配后可能残留 "1." 后的字符）
+        rest = re.sub(r'^[\s\.:\-\.,;]+', '', rest)
         # 截到下一个 Figure/Fig 标题（若存在）
         m = re.search(r'(?i)fig(?:ure)?\.?\s*\d+', rest)
         if m:
