@@ -127,8 +127,10 @@ class ArxivFetcher:
         return self.extract_text(pdf_bytes)
 
     def extract_figure1(self, paper: Dict) -> Dict:
-        """提取论文图 1：定位 Fig.1 标题所在页，优先取嵌入图，无则页面截图。
-        返回 {content: PNG bytes, caption: 图题文本}，失败返回 None"""
+        """提取论文图 1：定位 Fig.1 标题所在页，优先按嵌入图显示矩形并集圈定
+        图1实际区域并截图（完整多面板、避开正文），无嵌入图时回退到 caption
+        上方区域截图，再回退到最大嵌入图。
+        返回 {content: bytes, caption: 图题文本}，失败返回 None"""
         if not getattr(Config, 'EXTRACT_FIGURE1', True):
             return None
         try:
@@ -146,36 +148,40 @@ class ArxivFetcher:
                 m = fig_pat.search(text)
                 if not m:
                     continue
-                # 提取图题：从 Fig.1 标题行起，到下一个 Figure 标题或页末
                 caption = self._extract_caption(text, m.end())
+                rl = page.search_for(m.group(0))
+                cap_y = rl[0].y0 if rl else page.rect.height
+
                 content = None
-                # 优先：取该页面积最大的嵌入图（图1主体通常面积最大，
-                # 而不是第一张——第一张可能是装饰条/子面板）
-                imgs = page.get_images(full=True)
-                if imgs:
-                    best = None
-                    best_area = 0
-                    for img in imgs:
-                        try:
-                            w = img[2]
-                            h = img[3]
-                            area = w * h
-                            if area > best_area:
-                                best_area = area
-                                best = img
-                        except (IndexError, TypeError):
-                            continue
-                    if best is not None:
-                        info = doc.extract_image(best[0])
-                        content = self._to_png(info['image'], info['ext'])
-                        content = self._sanity_check_figure(content)
+                # 方案一：嵌入图显示矩形并集圈定图1实际区域（完整多面板，避开正文）
+                rects_union = self._figure_region(page, cap_y)
+                if rects_union is not None:
+                    pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=rects_union)
+                    content = self._sanity_check_figure(pix.tobytes("png"))
                 if content is None:
-                    # 兜底：截图页面 caption 上方区域（覆盖矢量图）
-                    rl = page.search_for(m.group(0))
-                    cap_y = rl[0].y0 if rl else page.rect.height
-                    clip = fitz.Rect(0, 0, page.rect.width, max(cap_y - 10, 10))
-                    pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=clip)
-                    content = pix.tobytes("png")
+                    # 方案二：截图 caption 上方整块区域（覆盖矢量图等）
+                    clip_h = max(cap_y - 10, 10)
+                    if clip_h > 0.15 * page.rect.height:
+                        pix = page.get_pixmap(matrix=fitz.Matrix(1.5, 1.5), clip=fitz.Rect(0, 0, page.rect.width, clip_h))
+                        content = self._sanity_check_figure(pix.tobytes("png"))
+                if content is None:
+                    # 方案三：取该页面积最大的嵌入图
+                    imgs = page.get_images(full=True)
+                    if imgs:
+                        best = None
+                        best_area = 0
+                        for img in imgs:
+                            try:
+                                area = img[2] * img[3]
+                                if area > best_area:
+                                    best_area = area
+                                    best = img
+                            except (IndexError, TypeError):
+                                continue
+                        if best is not None:
+                            info = doc.extract_image(best[0])
+                            content = self._to_png(info['image'], info['ext'])
+                            content = self._sanity_check_figure(content)
                 content = self._compress_image(content)
                 if content:
                     doc.close()
@@ -185,6 +191,37 @@ class ArxivFetcher:
         except Exception as e:
             logger.warning(f"图1提取失败 {paper.get('pdf_url', '')}: {e}")
             return None
+
+    def _figure_region(self, page, cap_y):
+        """计算 caption 上方嵌入图显示矩形的并集，作为图1的实际区域。
+        返回 fitz.Rect 或 None（无嵌入图在 caption 上方）"""
+        import fitz  # PyMuPDF
+        imgs = page.get_images(full=True)
+        y_min, y_max, x_min, x_max = None, None, None, None
+        for img in imgs:
+            try:
+                rects = page.get_image_rects(img[0])
+            except Exception:
+                continue
+            for rect in rects:
+                if rect.y1 < cap_y:  # 只考虑 caption 上方的图
+                    y_min = rect.y0 if y_min is None else min(y_min, rect.y0)
+                    y_max = rect.y1 if y_max is None else max(y_max, rect.y1)
+                    x_min = rect.x0 if x_min is None else min(x_min, rect.x0)
+                    x_max = rect.x1 if x_max is None else max(x_max, rect.x1)
+        if y_min is None or y_max is None:
+            return None
+        region_h = y_max - y_min
+        # 区域过小（<40px 高）判为无效；太贴近页面底部也不合理
+        if region_h < 40 or y_max > cap_y:
+            return None
+        # 稍作外扩，避免裁掉图边缘
+        pad = 4
+        x0 = max(x_min - pad, 0)
+        y0 = max(y_min - pad, 0)
+        x1 = min(x_max + pad, page.rect.width)
+        y1 = min(y_max + pad, cap_y)
+        return fitz.Rect(x0, y0, x1, y1)
 
     def _sanity_check_figure(self, content) -> bytes:
         """合理性检查：如果嵌入图太扁或太小（不像图1主体），返回 None 触发截图兜底"""
