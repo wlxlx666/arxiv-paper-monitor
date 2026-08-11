@@ -108,14 +108,15 @@ class ArxivDailyDigest:
                 else:
                     logger.info(f"PDF 获取失败，降级为摘要总结: {paper['title'][:50]}")
 
-        # 第三步：按 importance 排序，标记 Top 3 为今日最值得读
+        # 第三步：按 importance 排序，标记前 TOP_N 篇为今日最值得读
+        top_n = getattr(Config, 'PDF_READ_COUNT', 5)
         papers.sort(key=lambda p: p.get('importance', 3), reverse=True)
-        for paper in papers[:3]:
+        for paper in papers[:top_n]:
             paper['is_top'] = True
 
-        # 第三步补充：为 Top 3 论文生成作者代表作 + 第一单位
+        # 第三步补充：为前 TOP_N 论文生成作者代表作 + 第一单位 + 图1
         # 有 DeepSeek key 时解析完整作者角色；无 key 时降级为 arXiv 第一作者 + Semantic Scholar 代表作
-        for paper in papers[:3]:
+        for paper in papers[:top_n]:
             paper['author_profiles'] = self.author_profiles.build_author_profiles(paper, paper.get('full_text'))
             # 提取图 1（失败则 paper['figure1']=None，邮件不显示）
             paper['figure1'] = self.fetcher.extract_figure1(paper)
