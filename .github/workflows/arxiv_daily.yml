@@ -2,7 +2,7 @@ name: Daily Arxiv Paper Digest
 on:
   schedule:
     # 每天UTC时间1点运行，即北京/新加坡时间上午9点
-    - cron: '0 1 * * *'  
+    - cron: '00 22 * * *'  
   workflow_dispatch: # 允许在 GitHub 网页上点击按钮手动触发
 
 jobs:
